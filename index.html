@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Система: Сейфы и Хостики</title>
+<style>
+  :root{
+    --bg:#0f1724; --card:#0b1220; --accent:#00c2a8; --muted:#9aa7bb; --danger:#ff6b6b;
+    --glass: rgba(255,255,255,0.03);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  html,body{height:100%; margin:0; background:linear-gradient(180deg,#071022,#0a1322); color:#e6eef6}
+  .app{max-width:1100px; margin:20px auto; padding:20px; border-radius:12px; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent); box-shadow: 0 6px 30px rgba(2,6,23,0.6);}
+  header{display:flex;gap:12px;align-items:center; margin-bottom:14px}
+  header h1{font-size:20px;margin:0}
+  .top-actions{margin-left:auto;display:flex;gap:8px}
+  button, .btn{cursor:pointer;border:0;padding:8px 12px;border-radius:8px;background:var(--glass); color:var(--accent); font-weight:600}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid rgba(255,255,255,0.03)}
+  .grid{display:grid;gap:12px}
+  .section{margin-top:18px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.02)); padding:12px;border-radius:10px; text-align:center; position:relative; min-height:110px}
+  .card .title{font-size:13px;color:var(--muted);margin-top:8px}
+  .icon{font-size:34px; display:block}
+  .safe{background:#071428;border-radius:10px;padding:12px}
+  .server{background:#07122a;border-radius:10px;padding:12px}
+  .badge{position:absolute; top:8px; right:8px; background:var(--accent); color:#042022; font-weight:700; padding:4px 6px;border-radius:6px; font-size:12px}
+  .warn{background:var(--danger); color:#2b0b0b}
+  .muted{color:var(--muted); font-size:13px}
+  .modal{position:fixed; inset:0; display:flex; justify-content:center; align-items:center; background:rgba(2,6,23,0.6); z-index:50}
+  .panel{background:linear-gradient(180deg,#071427,#081328); padding:18px;border-radius:12px; min-width:320px; color:#e6eef6; box-shadow:0 10px 40px rgba(2,6,23,0.7)}
+  .form-row{margin:8px 0; display:flex; flex-direction:column; gap:6px}
+  input[type="text"], input[type="password"], textarea, select{background:transparent;border:1px solid rgba(255,255,255,0.04); padding:8px;border-radius:8px;color:var(--accent)}
+  textarea{min-height:100px}
+  .row{display:flex;gap:8px;align-items:center}
+  .small{font-size:13px;color:var(--muted)}
+  footer{margin-top:18px; color:var(--muted); font-size:13px}
+  .danger{color:var(--danger)}
+  .help{font-size:13px;color:var(--muted); margin-top:6px}
+  .inline-actions{display:flex;gap:8px;justify-content:center;margin-top:10px}
+  .pill{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.02); color:var(--muted); font-weight:600}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header>
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#012431"/><path d="M6 12h12M12 6v12" stroke="#00C2A8" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <div>
+      <h1>Сейфы & Хостики — локальная версия</h1>
+      <div class="small">Личные сейфы и публичные серверы (хранение в localStorage)</div>
+    </div>
+    <div class="top-actions">
+      <button id="resetAll" class="btn-ghost">Сбросить всё</button>
+      <button id="export" class="btn">Экспорт</button>
+    </div>
+  </header>
+
+  <section class="section">
+    <div style="display:flex;gap:12px;align-items:center">
+      <h3 style="margin:0">Личные сейфы</h3>
+      <div class="small">(15)</div>
+    </div>
+    <div class="cards" id="personalGrid"></div>
+    <div class="help">Клик на сейф — открыть. Длительный контроль PIN: 6 цифр. Данные хранятся локально в браузере.</div>
+  </section>
+
+  <section class="section">
+    <div style="display:flex;gap:12px;align-items:center">
+      <h3 style="margin:0">Публичные хостики</h3>
+      <div class="small">7×10 ячеек + спец-хостик №8 — 50 ячеек</div>
+    </div>
+    <div class="cards" id="hostsGrid"></div>
+  </section>
+
+  <footer>
+    <div>Примечание: localStorage — не безопасное хранилище. Для реального общего доступа нужен сервер.</div>
+  </footer>
+</div>
+
+<!-- Модал -->
+<div id="modal" style="display:none"></div>
+
+<script>
+/* ---------- Конфигурация ---------- */
+const PERSONAL_CELL_COUNT = 15;
+const HOST_COUNT = 8;
+const HOST_CELL_COUNT = 10;
+const SPECIAL_HOST_INDEX = HOST_COUNT - 1; // индекс 7
+const SPECIAL_HOST_CELL_COUNT = 50;
+const STORAGE_KEY = 'safes_hosts_v1';
+const ADMIN_PIN = '123456'; // можно изменить прямо в файле
+
+/* ---------- Утилиты: хеш SHA-256 для PIN (Web Crypto) ---------- */
+async function sha256hex(str){
+  const enc = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.prototype.map.call(new Uint8Array(buf), x => ('00' + x.toString(16)).slice(-2)).join('');
+}
+
+/* ---------- State: load/save ---------- */
+function defaultState(){
+  const hosts = [];
+  for(let i=0;i<HOST_COUNT;i++){
+    const count = (i===SPECIAL_HOST_INDEX)? SPECIAL_HOST_CELL_COUNT : HOST_CELL_COUNT;
+    hosts.push({ name: `Хостик ${i+1}`, cells: Array.from({length:count}, ()=>({ text:'', pinHash:null })) });
+  }
+  return {
+    personal: Array.from({length:PERSONAL_CELL_COUNT}, ()=>({ text:'', pinHash:null })),
+    hosts: hosts,
+    adminPinHash: null
+  };
+}
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return defaultState();
+    const obj = JSON.parse(raw);
+    // migration: ensure structure
+    const base = defaultState();
+    base.personal = obj.personal || base.personal;
+    base.hosts = obj.hosts || base.hosts;
+    base.adminPinHash = obj.adminPinHash || null;
+    return base;
+  }catch(e){
+    console.error('load error',e);
+    return defaultState();
+  }
+}
+function saveState(s){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+}
+
+/* ---------- UI: render ---------- */
+const modalRoot = document.getElementById('modal');
+let STATE = loadState();
+renderAll();
+
+document.getElementById('resetAll').addEventListener('click', ()=>{
+  if(!confirm('Сбросить все данные (локально)?')) return;
+  STATE = defaultState();
+  saveState(STATE);
+  renderAll();
+});
+document.getElementById('export').addEventListener('click', ()=>{
+  const data = JSON.stringify(STATE, null, 2);
+  const blob = new Blob([data], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'safes_hosts_export.json'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+/* ---------- Helpers for rendering cards ---------- */
+function makeSafeIcon(){
+  return `<svg width="44" height="44" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#021824"/><circle cx="12" cy="11.5" r="3" stroke="#00C2A8" stroke-width="1.4"/><rect x="6" y="15" width="12" height="1.4" rx="0.7" fill="#00C2A8" opacity="0.12"/></svg>`;
+}
+function makeServerIcon(warn=false){
+  if(warn){
+    return `<svg width="44" height="44" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#220b0b"/><rect x="4" y="5" width="16" height="4" rx="1" fill="#ffb3b3"/><rect x="4" y="12" width="16" height="4" rx="1" fill="#ffb3b3"/><circle cx="7.5" cy="7.5" r="0.9" fill="#2b0b0b"/><circle cx="7.5" cy="14.5" r="0.9" fill="#2b0b0b"/><text x="17" y="20" font-size="14" fill="#fff" text-anchor="end">⚠</text></svg>`;
+  }
+  return `<svg width="44" height="44" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#07122a"/><rect x="4" y="5" width="16" height="4" rx="1" fill="#00C2A8"/><rect x="4" y="12" width="16" height="4" rx="1" fill="#00C2A8"/><circle cx="7.5" cy="7.5" r="0.9" fill="#012"/><circle cx="7.5" cy="14.5" r="0.9" fill="#012"/></svg>`;
+}
+
+/* ---------- Render personal safes ---------- */
+function renderAll(){
+  renderPersonal();
+  renderHosts();
+}
+
+function renderPersonal(){
+  const root = document.getElementById('personalGrid');
+  root.innerHTML = '';
+  STATE.personal.forEach((cell, idx) => {
+    const card = document.createElement('div');
+    card.className = 'card safe';
+    card.innerHTML = `
+      <div class="icon">${makeSafeIcon()}</div>
+      <div class="title">Сейф ${idx+1}</div>
+      <div class="muted">${cell.text? (cell.text.length>40? cell.text.slice(0,40)+'…':cell.text) : '(пусто)'}</div>
+      ${cell.pinHash? '<div class="badge">🔒</div>' : ''}
+    `;
+    card.addEventListener('click', ()=>openPersonal(idx));
+    root.appendChild(card);
+  });
+}
+
+/* ---------- Personal interactions ---------- */
+async function openPersonal(idx){
+  const cell = STATE.personal[idx];
+  if(cell.pinHash){
+    // ask PIN
+    const pin = await modalPrompt('Введи PIN (6 цифр):','password');
+    if(pin === null) return;
+    const h = await sha256hex(pin);
+    if(h !== cell.pinHash){ await modalAlert('Неверный PIN'); return; }
+  }
+  // show view modal
+  await modalViewPersonal(idx);
+}
+
+async function modalViewPersonal(idx){
+  const cell = STATE.personal[idx];
+  await modalOpen(`
+    <h3>Личная ячейка ${idx+1}</h3>
+    <div class="small muted">Содержимое:</div>
+    <div style="margin-top:8px; padding:10px; background:#041826; border-radius:8px; min-height:80px; white-space:pre-wrap">${escapeHtml(cell.text || '(пусто)')}</div>
+    <div class="inline-actions">
+      <button id="edit" class="btn">Изменить</button>
+      <button id="pinbtn" class="btn-ghost">PIN</button>
+      <button id="del" class="btn-ghost">Удалить</button>
+      <button id="close" class="btn-ghost">Закрыть</button>
+    </div>
+  `);
+  document.getElementById('edit').onclick = async ()=>{
+    const text = await modalPrompt('Новый текст (можно многострочно):','text', cell.text || '');
+    if(text === null) return;
+    STATE.personal[idx].text = text;
+    saveState(STATE); renderAll(); modalClose();
+  };
+  document.getElementById('pinbtn').onclick = async ()=>{
+    const pin = await modalPrompt('Введите 6-значный PIN (или 0 чтобы снять):','password','');
+    if(pin===null) return;
+    if(pin === '0'){ STATE.personal[idx].pinHash = null; saveState(STATE); renderAll(); modalAlert('PIN снят'); modalClose(); return; }
+    if(!/^\d{6}$/.test(pin)){ modalAlert('PIN должен иметь ровно 6 цифр'); return; }
+    STATE.personal[idx].pinHash = await sha256hex(pin);
+    saveState(STATE); renderAll(); modalAlert('PIN установлен'); modalClose();
+  };
+  document.getElementById('del').onclick = ()=>{
+    if(!confirm('Очистить сейф?')) return;
+    STATE.personal[idx].text=''; STATE.personal[idx].pinHash=null; saveState(STATE); renderAll(); modalClose();
+  };
+  document.getElementById('close').onclick = ()=>modalClose();
+}
+
+/* ---------- Hosts rendering ---------- */
+function renderHosts(){
+  const root = document.getElementById('hostsGrid');
+  root.innerHTML = '';
+  STATE.hosts.forEach((host, i) => {
+    const card = document.createElement('div');
+    card.className = 'card server';
+    const warn = (i===SPECIAL_HOST_INDEX);
+    card.innerHTML = `
+      <div class="icon">${makeServerIcon(warn)}</div>
+      <div class="title">${escapeHtml(host.name)}</div>
+      <div class="muted">Ячеек: ${host.cells.length} ${warn? '<span style="color:#ffb3b3">⚠ спец</span>':''}</div>
+    `;
+    card.addEventListener('click', ()=>openHost(i));
+    root.appendChild(card);
+  });
+}
+
+/* ---------- Host interactions ---------- */
+async function openHost(idx){
+  // show card with connect & rename
+  const host = STATE.hosts[idx];
+  await modalOpen(`
+    <h3>${escapeHtml(host.name)} ${idx===SPECIAL_HOST_INDEX?'<span style="color:#ffb3b3">⚠ спец</span>':''}</h3>
+    <div class="small muted">Ячеек: ${host.cells.length}</div>
+    <div class="inline-actions">
+      <button id="connect" class="btn">Подключиться</button>
+      <button id="rename" class="btn-ghost">Изменить имя</button>
+      <button id="close" class="btn-ghost">Закрыть</button>
+    </div>
+  `);
+  document.getElementById('connect').onclick = async ()=>{
+    modalClose(); renderHostCells(idx);
+  };
+  document.getElementById('rename').onclick = async ()=>{
+    modalClose();
+    if(idx===SPECIAL_HOST_INDEX){
+      // require ADMIN_PIN
+      const pin = await modalPrompt('Введите ADMIN PIN:','password');
+      if(pin === null) return;
+      const stored = STATE.adminPinHash;
+      let ok = false;
+      if(stored){
+        const h = await sha256hex(pin);
+        ok = (h === stored);
+      } else {
+        // if no adminPinHash saved, accept default ADMIN_PIN constant
+        ok = (pin === ADMIN_PIN);
+      }
+      if(!ok){ await modalAlert('Неверный ADMIN PIN'); return; }
+    }
+    const newName = await modalPrompt('Новое имя хостика:', 'text', host.name);
+    if(newName === null) return;
+    STATE.hosts[idx].name = newName.slice(0,64);
+    saveState(STATE); renderAll(); modalAlert('Имя обновлено');
+  };
+  document.getElementById('close').onclick = ()=>modalClose();
+}
+
+async function renderHostCells(hostIdx){
+  const host = STATE.hosts[hostIdx];
+  await modalOpen(`<h3>${escapeHtml(host.name)} — Ячейки</h3><div id="hostCellsRoot"></div><div style="margin-top:10px; text-align:center"><button id="backHost" class="btn-ghost">Назад</button></div>`);
+  const root = document.getElementById('hostCellsRoot');
+  root.innerHTML = '';
+  // build grid
+  const grid = document.createElement('div'); grid.style.display='grid'; grid.style.gridTemplateColumns='repeat(auto-fill,minmax(120px,1fr))'; grid.style.gap='10px';
+  host.cells.forEach((cell, cidx)=>{
+    const c = document.createElement('div');
+    c.className='card server';
+    c.style.minHeight='100px';
+    c.innerHTML = `
+      <div class="icon">${makeSafeIcon()}</div>
+      <div class="title">Ячейка ${cidx+1}</div>
+      <div class="muted">${cell.text? (cell.text.length>40? cell.text.slice(0,40)+'…':cell.text) : '(пусто)'}</div>
+      ${cell.pinHash? '<div class="badge">🔒</div>' : ''}
+    `;
+    c.addEventListener('click', ()=>openHostCell(hostIdx, cidx));
+    grid.appendChild(c);
+  });
+  root.appendChild(grid);
+  document.getElementById('backHost').onclick = ()=>{ modalClose(); renderAll(); };
+}
+
+/* ---------- Host cell actions ---------- */
+async function openHostCell(hostIdx, cellIdx){
+  const cell = STATE.hosts[hostIdx].cells[cellIdx];
+  if(cell.pinHash){
+    const pin = await modalPrompt('Введи PIN (6 цифр):','password');
+    if(pin === null) return;
+    const h = await sha256hex(pin);
+    if(h !== cell.pinHash){ await modalAlert('Неверный PIN'); return; }
+  }
+  // show cell view
+  await modalOpen(`
+    <h3>${escapeHtml(STATE.hosts[hostIdx].name)} — Ячейка ${cellIdx+1}</h3>
+    <div class="small muted">Содержимое:</div>
+    <div style="margin-top:8px; padding:10px; background:#041826; border-radius:8px; min-height:80px; white-space:pre-wrap">${escapeHtml(cell.text || '(пусто)')}</div>
+    <div class="inline-actions">
+      <button id="edit" class="btn">Изменить</button>
+      <button id="pinbtn" class="btn-ghost">PIN</button>
+      <button id="del" class="btn-ghost">Удалить</button>
+      <button id="close" class="btn-ghost">Закрыть</button>
+    </div>
+  `);
+  document.getElementById('edit').onclick = async ()=>{
+    const text = await modalPrompt('Новый текст (можно многострочно):','text', cell.text || '');
+    if(text === null) return;
+    STATE.hosts[hostIdx].cells[cellIdx].text = text;
+    saveState(STATE); modalAlert('Сохранено'); modalClose();
+    renderAll();
+    await renderHostCells(hostIdx);
+  };
+  document.getElementById('pinbtn').onclick = async ()=>{
+    const pin = await modalPrompt('Введите 6-значный PIN или 0 чтобы снять:','password');
+    if(pin===null) return;
+    if(pin==='0'){ STATE.hosts[hostIdx].cells[cellIdx].pinHash = null; saveState(STATE); renderAll(); modalAlert('PIN снят'); modalClose(); await renderHostCells(hostIdx); return; }
+    if(!/^\d{6}$/.test(pin)){ modalAlert('PIN должен быть ровно 6 цифр'); return; }
+    STATE.hosts[hostIdx].cells[cellIdx].pinHash = await sha256hex(pin);
+    saveState(STATE); renderAll(); modalAlert('PIN установлен'); modalClose(); await renderHostCells(hostIdx);
+  };
+  document.getElementById('del').onclick = ()=>{
+    if(!confirm('Очистить ячейку?')) return;
+    STATE.hosts[hostIdx].cells[cellIdx].text=''; STATE.hosts[hostIdx].cells[cellIdx].pinHash=null;
+    saveState(STATE); renderAll(); modalClose();
+    renderHostCells(hostIdx);
+  };
+  document.getElementById('close').onclick = ()=>{ modalClose(); renderHostCells(hostIdx); };
+}
+
+/* ---------- Modal primitives ---------- */
+function modalOpen(html){
+  modalRoot.innerHTML = `<div class="modal"><div class="panel">${html}</div></div>`;
+  modalRoot.style.display = 'block';
+  return Promise.resolve();
+}
+function modalClose(){ modalRoot.style.display='none'; modalRoot.innerHTML=''; }
+function modalAlert(msg){
+  return new Promise(res=>{
+    modalOpen(`<h3>Сообщение</h3><div style="margin-top:8px">${escapeHtml(msg)}</div><div style="text-align:right;margin-top:12px"><button id="ok" class="btn">Ок</button></div>`);
+    document.getElementById('ok').onclick = ()=>{ modalClose(); res(); };
+  });
+}
+function modalPrompt(title, type='text', value=''){
+  return new Promise(res=>{
+    const inputType = (type==='password')? 'password' : 'text';
+    modalOpen(`<h3>${escapeHtml(title)}</h3>
+      <div class="form-row"><input id="mInput" type="${inputType}" value="${escapeHtml(value)}" /></div>
+      <div style="text-align:right; margin-top:8px"><button id="ok" class="btn">OK</button> <button id="cancel" class="btn-ghost">Отмена</button></div>`);
+    const el = document.getElementById('mInput'); el.focus();
+    document.getElementById('ok').onclick = ()=>{ modalClose(); res(el.value); };
+    document.getElementById('cancel').onclick = ()=>{ modalClose(); res(null); };
+  });
+}
+
+/* ---------- Utils ---------- */
+function escapeHtml(s){ return (s+'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+/* ---------- Save on change ---------- */
+function saveState(state){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+/* ensure initial save */
+saveState(STATE);
+</script>
+</body>
+</html>
