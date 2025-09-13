@@ -3,5 +3,6 @@
 2)Please share your code in this repository!
 
 ## Тут будет информация об обновлениях и обычные обьявления ##
-
+1) Обьявление об обновлении версии репозитория текущая версия репозитория v 1.1
 ## There will be information about updates and regular announcements ##
+1) Repository version update announcement current repository version v 1.1
